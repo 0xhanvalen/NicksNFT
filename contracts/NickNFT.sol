@@ -57,6 +57,10 @@ contract NickNFT is ERC721A {
         _;
     }
 
+    function setAllowList(bytes32 _root) external onlyOwner {
+        thisData.allowList = _root;
+    }
+
     function setPublicSale(bool _newVal) external onlyOwner {
         thisData.isPublicSale = _newVal;
     }
