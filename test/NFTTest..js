@@ -40,4 +40,10 @@ describe("NFT", async function () {
     await Token.setPublicSale(true);
     await expect(Token.publicMint(4, {value: ethers.utils.parseEther("0.5")})).to.be.revertedWith("Too Many Mints");
   });
+
+  it("Should allow withdraws", async () => {
+    await Token.setPublicSale(true);
+    Token.publicMint(2, {value: ethers.utils.parseEther("0.5")});
+    await expect(Token.withdraw()).to.not.be.reverted;
+  })
 });

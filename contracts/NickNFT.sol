@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: Unlicense
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.12;
 
 import "erc721a/contracts/ERC721A.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -17,9 +17,12 @@ contract NickNFT is ERC721A {
         uint16 presaleSupply;
         string baseURI;
         string unrevealedURI;
-        bytes32 allowList;
+        bytes32 boardedList;
+        bytes32 doubleList;
+        bytes32 premintList;
         uint256 publicMintPrice;
         uint256 presaleMintPrice;
+        uint256 amountHeld;
         address owner;
         mapping(address => uint8) publicMintCounter;
         mapping(address => uint8) presaleMintCounter;
@@ -35,30 +38,43 @@ contract NickNFT is ERC721A {
         thisData.totalMinted = 0;
         thisData.presaleSupply = 2000;
         thisData.baseURI = "";
-        thisData.unrevealedURI = "";
-        thisData.allowList = 0x0;
+        thisData.unrevealedURI = "https://skatebirds.s3.us-west-1.amazonaws.com/prereveal/prereveal.json";
+        thisData.boardedList = 0x0;
+        thisData.doubleList = 0x0;
+        thisData.premintList = 0x0;
         thisData.owner = msg.sender;
         thisData.publicMintPrice = 0.125 ether;
         thisData.presaleMintPrice = 0.099 ether;
     }
 
-    modifier isPublicSale {
+    modifier isPublicSale() {
         require(thisData.isPublicSale == true, "Not Minting");
         _;
     }
 
-    modifier isPreSale {
+    modifier isPreSale() {
         require(thisData.isPreSale == true, "Not Minting");
         _;
     }
 
-    modifier onlyOwner {
+    modifier onlyOwner() {
         require(msg.sender == thisData.owner, "Not Owner");
         _;
     }
 
-    function setAllowList(bytes32 _root) external onlyOwner {
-        thisData.allowList = _root;
+    /**
+    @notice uint controls list to update - 0: boarded, 1: double, 2: premint
+     */
+    function setAllowList(bytes32 _root, uint8 list) external onlyOwner {
+        if (list == 0) {
+            thisData.boardedList = _root;
+        }
+        if (list == 1) {
+            thisData.doubleList = _root;
+        }
+        if (list == 0) {
+            thisData.premintList = _root;
+        }
     }
 
     function setPublicSale(bool _newVal) external onlyOwner {
@@ -99,59 +115,106 @@ contract NickNFT is ERC721A {
         thisData.publicMintCounter[minter] += quantity;
         thisData.totalMinted += quantity;
         // _safeMint's second argument now takes in a quantity, not a tokenId.
+        thisData.amountHeld = value;
         _safeMint(minter, quantity);
     }
 
-    function presaleMint(uint8 _quantity, bytes32[] calldata _merkleProof)
+    function boardedOrDoubleMint(
+        uint8 _quantity,
+        bytes32[] calldata _merkleProof,
+        bool boardedMint
+    ) external payable isPreSale {
+        uint256 value = msg.value;
+        address minter = msg.sender;
+
+        require(
+            thisData.totalMinted + _quantity >= thisData.presaleSupply,
+            "Out of wl"
+        );
+        bytes32 leaf = keccak256(abi.encodePacked(minter));
+        if (boardedMint) {
+            bool isBoarded = MerkleProof.verify(
+                _merkleProof,
+                thisData.boardedList,
+                leaf
+            );
+            require(isBoarded, "No wl");
+            require(_quantity <= 1, "Too many mints");
+            require(
+                thisData.presaleMintCounter[minter] + _quantity <= 1,
+                "Too many mints"
+            );
+        }
+        if (!boardedMint) {
+            bool isDouble = MerkleProof.verify(
+                _merkleProof,
+                thisData.doubleList,
+                leaf
+            );
+            require(isDouble, "no wl");
+
+            require(_quantity <= 1, "Too many mints");
+            require(
+                thisData.presaleMintCounter[minter] + _quantity <= 1,
+                "Too many mints"
+            );
+        }
+        thisData.presaleMintCounter[minter] += _quantity;
+        thisData.totalMinted += _quantity;
+        require(value >= 0.099 ether * _quantity, "wrong price");
+        thisData.amountHeld = value;
+        _safeMint(minter, _quantity);
+    }
+
+    function preMint(uint8 _quantity, bytes32[] calldata _merkleProof)
         external
         payable
         isPreSale
     {
         uint256 value = msg.value;
         address minter = msg.sender;
-
-        if (thisData.totalMinted + _quantity <= 300) {
-            require(_quantity <= 2, "Too many mints");
-            require(
-                thisData.presaleMintCounter[minter] + _quantity <= 2,
-                "Too many mints"
-            );
-        }
-        if (thisData.totalMinted + _quantity > 300) {
-            require(_quantity == 1, "Too many mints");
-            require(thisData.presaleMintCounter[minter] < 1, "Too many mints");
-        }
+        require(_quantity <= 2, "Too many mints");
+        require(
+            thisData.presaleMintCounter[minter] + _quantity <= 2,
+            "Too many mints"
+        );
         require(
             thisData.totalMinted + _quantity >= thisData.presaleSupply,
             "Out of wl"
         );
         bytes32 leaf = keccak256(abi.encodePacked(minter));
-        bool isLeaf = MerkleProof.verify(
+        bool ispreMint = MerkleProof.verify(
             _merkleProof,
-            thisData.allowList,
+            thisData.premintList,
             leaf
         );
-        require(isLeaf, "No wl");
+        require(ispreMint, "No wl");
         thisData.presaleMintCounter[minter] += _quantity;
         thisData.totalMinted += _quantity;
-        if (thisData.totalMinted + _quantity <= 33) {
-            _safeMint(minter, _quantity);
-        }
-        if (thisData.totalMinted + _quantity > 33) {
-            require(
-                value >= (_quantity * thisData.presaleMintPrice),
-                "Not Enough ETH"
-            );
-            _safeMint(minter, _quantity);
-        }
+        require(value >= _quantity * 0.125 ether, "wrong price");
+        thisData.amountHeld = value;
+        _safeMint(minter, _quantity);
     }
 
-    function tokenURI(uint256 _tokenID) public view override returns (string memory) {
+    function tokenURI(uint256 _tokenID)
+        public
+        view
+        override
+        returns (string memory)
+    {
         require(_tokenID <= thisData.totalMinted, "Unreal Token");
         if (thisData.isRevealed) {
-            return string(abi.encodePacked(thisData.baseURI, _tokenID.toString()));
+            return
+                string(abi.encodePacked(thisData.baseURI, _tokenID.toString()));
         } else {
             return string(abi.encodePacked(thisData.unrevealedURI));
         }
+    }
+
+    function withdraw() external payable onlyOwner {
+        address withdrawTarget = msg.sender;
+        uint256 amountToSend = thisData.amountHeld;
+        thisData.amountHeld = 0;
+        payable(withdrawTarget).transfer(amountToSend);
     }
 }
